@@ -5,12 +5,12 @@ import numpy as np
 import os
 import struct
 
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 from itertools import combinations
 
-from .camera import Camera
-from .image import Image
-from .rotation import Quaternion
+from camera import Camera
+from image import Image
+from rotation import Quaternion
 
 #-------------------------------------------------------------------------------
 #
@@ -21,13 +21,16 @@ from .rotation import Quaternion
 class SceneManager:
     INVALID_POINT3D = np.uint64(-1)
 
-    def __init__(self, colmap_results_folder, image_path=None):
+    def __init__(self,colmap_results_folder, images_folder, extrinsics_filename, intrinsics_filename, imgs_in_set, image_path=None):
         self.folder = colmap_results_folder
         if not self.folder.endswith('/'):
             self.folder += '/'
 
+        # self.train_split = train_split
+        self.imgs_in_set = imgs_in_set
+
         self.image_path = None
-        self.load_colmap_project_file(image_path=image_path)
+        # self.load_colmap_project_file(image_path=image_path)
 
         self.cameras = OrderedDict()
         self.images = OrderedDict()
@@ -35,6 +38,16 @@ class SceneManager:
 
         self.last_camera_id = 0
         self.last_image_id = 0
+
+        self.extrinsics_filename = extrinsics_filename
+        self.intrinsics_filename = intrinsics_filename
+
+        self.extrinsics = None
+        self.intrinsics = None
+
+        self.images_folder = images_folder
+        self.image_names = None
+
 
         # Nx3 array of point3D xyz's
         self.points3D = np.zeros((0, 3))
@@ -82,6 +95,14 @@ class SceneManager:
         self.load_points3D()
 
     #---------------------------------------------------------------------------
+
+    def load_intrinsics_extrinsics(self):
+        #Load csv files in numpy
+        self.intrinsics = np.loadtxt(self.intrinsics_filename, delimiter=',')
+        self.extrinsics = np.loadtxt(self.extrinsics_filename, delimiter=',')
+
+
+
 
     def load_cameras(self, input_file=None):
         if input_file is None:
@@ -136,6 +157,18 @@ class SceneManager:
                 else:
                     raise IOError('no images file found')
 
+    def load_images_reduced(self, input_file=None):
+        if input_file is None:
+            input_file = self.datadir + 'images.bin'
+            if os.path.exists(input_file):
+                self._load_images_bin_reduced(input_file)
+            else:
+                input_file = self.folder + 'images.txt'
+                if os.path.exists(input_file):
+                    self._load_images_txt(input_file)
+                else:
+                    raise IOError('no images file found')
+
     def _load_images_bin(self, input_file):
         self.images = OrderedDict()
 
@@ -177,6 +210,48 @@ class SceneManager:
                 self.name_to_image_id[image.name] = image_id
 
                 self.last_image_id = max(self.last_image_id, image_id)
+
+    def _load_images_bin_reduced(self, input_file):
+        self.images_reduced = OrderedDict()
+
+        with open(input_file, 'rb') as f:
+            num_images = struct.unpack('L', f.read(8))[0]
+            image_struct = struct.Struct('<I 4d 3d I')
+            for _ in range(num_images):
+                data = image_struct.unpack(f.read(image_struct.size))
+                image_id = data[0]
+                q = Quaternion(np.array(data[1:5]))
+                t = np.array(data[5:8])
+                camera_id = data[8]
+                name = b''.join(c for c in iter(lambda: f.read(1), b'\x00')).decode()
+
+                image = Image(name, camera_id, q, t)
+                num_points2D = struct.unpack('Q', f.read(8))[0]
+
+                # Optimized code below.
+                # Read all elements as double first, then convert to array, slice it
+                # into points2d and ids, and convert ids back to unsigned long longs
+                # ('Q'). This is significantly faster than using O(num_points2D) f.read
+                # calls, experiments show >7x improvements in 60 image model, 23s -> 3s.
+                points_array = array.array('d')
+                points_array.fromfile(f, 3 * num_points2D)
+                points_elements = np.array(points_array).reshape((num_points2D, 3))
+                image.points2D = points_elements[:, :2]
+
+                ids_array = array.array('Q')
+                ids_array.frombytes(points_elements[:, 2].tobytes())
+                image.point3D_ids = np.array(ids_array, dtype=np.uint64).reshape(
+                    (num_points2D,))
+
+                # automatically remove points without an associated 3D point
+                mask = (image.point3D_ids != SceneManager.INVALID_POINT3D)
+                image.points2D = image.points2D[mask]
+                image.point3D_ids = image.point3D_ids[mask]
+
+                self.images_reduced[image_id] = image
+                self.name_to_image_id_reduced[image.name] = image_id
+
+                self.last_image_id_reduced = max(self.last_image_id, image_id)
 
     def _load_images_txt(self, input_file):
         self.images = OrderedDict()

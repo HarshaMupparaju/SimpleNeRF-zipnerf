@@ -46,7 +46,20 @@ class Config:
     near: float = 2.  # Near plane distance.
     far: float = 6.  # Far plane distance.
     exp_name: str = "test"  # experiment name
-    data_dir: Optional[str] = "/SSD_DISK/datasets/360_v2/bicycle"  # Input data directory.
+    data_dir: Optional[str] = "/SSD_DISK/datasets/360_v2/bonsai"  # Input data directory.
+
+    camera_data_dir: str = "data/MipNeRF360/360_v2/bonsai"
+    sparse_depth_dir: str = "data/MipNeRF360/all/estimated_depths/DEL001_DE04/bonsai"  # Input sparse depth directory.
+    sparse_depth_needed: bool = True  # If True, use sparse depth for training.
+
+    sparse_depth_batch_size: int = 1024
+
+    train_test_split_dir: str = "data/MipNeRF360/train_test_splits/set04"
+
+
+    scene_name: str = "bonsai"  # The name of the scene.
+
+
     vocab_tree_path: Optional[str] = None  # Path to vocab tree for COLMAP.
     render_chunk_size: int = 65536  # Chunk size for whole-image renderings.
     num_showcase_images: int = 5  # The number of test-set images to showcase.
@@ -64,7 +77,7 @@ class Config:
     early_exit_steps: Optional[int] = None  # Early stopping, for debugging.
     checkpoint_every: int = 5000  # The number of steps to save a checkpoint.
     resume_from_checkpoint: bool = True  # whether to resume from checkpoint.
-    checkpoints_total_limit: int = 1
+    checkpoints_total_limit: int = 10
     gradient_scaling: bool = False  # If True, scale gradients as in https://gradient-scaling.github.io/.
     print_every: int = 100  # The number of steps between reports to tensorboard.
     train_render_every: int = 500  # Steps between test set renders when training
@@ -83,6 +96,8 @@ class Config:
     # Mult. on the coarser predicted normal loss.
     predicted_normal_coarse_loss_mult: float = 0.0
     hash_decay_mults: float = 0.1
+    # penalizing_depth_loss_mult: int = 10
+    sparse_depth_coarse_loss_mult: float = 0.01 # Multiplier on the sparse depth loss.
 
     lr_init: float = 0.01  # The initial learning rate.
     lr_final: float = 0.001  # The final learning rate.

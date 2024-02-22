@@ -16,10 +16,11 @@ import torch.nn.functional as F
 from torch.utils._pytree import tree_map
 from tqdm import tqdm
 from gridencoder import GridEncoder
-try:
-    from torch_scatter import segment_coo
-except:
-    pass
+from torch_scatter import segment_coo
+# try:
+#     from torch_scatter import segment_coo
+# except:
+#     pass
 
 gin.config.external_configurable(math.safe_exp, module='math')
 
@@ -39,6 +40,7 @@ class Model(nn.Module):
     anneal_slope: float = 10  # Higher = more rapid annealing.
     stop_level_grad: bool = True  # If True, don't backprop across levels.
     use_viewdirs: bool = True  # If True, use view directions as input.
+    # use_viewdirs: bool = False  # If True, use view directions as input.
     raydist_fn = None  # The curve used for ray dists.
     single_jitter: bool = True  # If True, jitter whole rays instead of samples.
     dilation_multiplier: float = 0.5  # How much to dilate intervals relatively.
@@ -55,6 +57,7 @@ class Model(nn.Module):
     power_lambda: float = -1.5
     std_scale: float = 0.5
     prop_desired_grid_size = [512, 2048]
+    # prop_desired_grid_size = [2**4, 2**6]
 
     def __init__(self, config=None, **kwargs):
         super().__init__()
@@ -125,7 +128,10 @@ class Model(nn.Module):
             glo_vec = None
 
         # Define the mapping from normalized to metric ray distance.
-        _, s_to_t = coord.construct_ray_warps(self.raydist_fn, batch['near'], batch['far'], self.power_lambda)
+        t_to_s, s_to_t = coord.construct_ray_warps(self.raydist_fn, batch['near'], batch['far'], self.power_lambda)
+
+        #Changing sparse depths from t to s
+        batch['sparse_depth'] = t_to_s(batch['sparse_depth'].reshape(-1,1,1))[0].reshape(-1, 1, 1)
 
         # Initialize the range of (normalized) distances for each ray to [0, 1],
         # and assign that single interval a weight of 1. These distances and weights
@@ -279,6 +285,8 @@ class Model(nn.Module):
                 tdist,
                 bg_rgbs,
                 batch['far'],
+                # sdist,
+                t_to_s,
                 compute_extras,
                 extras={
                     k: v
@@ -365,8 +373,11 @@ class MLP(nn.Module):
     grid_level_interval: int = 2
     grid_level_dim: int = 4
     grid_base_resolution: int = 16
+    # grid_base_resolution: int = 2**3
     grid_disired_resolution: int = 8192
+    # grid_disired_resolution: int = 2**8
     grid_log2_hashmap_size: int = 21
+    # grid_log2_hashmap_size: int = 7
     net_width_glo: int = 128  # The width of the second part of MLP.
     net_depth_glo: int = 2  # The width of the second part of MLP.
 
@@ -661,6 +672,12 @@ class NerfMLP(MLP):
 @gin.configurable
 class PropMLP(MLP):
     pass
+
+# class aug_NerfMLP(MLP):
+#     pass
+#
+# class aug_PropMLP(MLP):
+#     pass
 
 
 @torch.no_grad()

@@ -1,15 +1,23 @@
-Config.exp_name = 'test'
+Config.exp_name = '7152'
 Config.dataset_loader = 'llff'
-Config.near = 0.2
+Config.near = 1
 Config.far = 1e6
 Config.factor = 4
+Config.sparse_depth_needed = True
+Config.sparse_depth_coarse_loss_mult = 0.01
+
 
 Model.raydist_fn = 'power_transformation'
 Model.opaque_background = True
+Model.prop_disired_grid_size = [512, 2048]
 
 PropMLP.disable_density_normals = True
 PropMLP.disable_rgb = True
 PropMLP.grid_level_dim = 1
 
 NerfMLP.disable_density_normals = True
+NerfMLP.grid_base_resolution = 16
+NerfMLP.grid_disired_resolution = 8192
+NerfMLP.grid_num_levels = 10
+NerfMLP.grid_log2_hashmap_size = 21
 

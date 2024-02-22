@@ -1,8 +1,8 @@
 #!/bin/bash
 
-SCENE=bicycle
-EXPERIMENT=360_v2/"$SCENE"
-DATA_ROOT=/SSD_DISK/datasets/360_v2
+SCENE=bonsai
+EXPERIMENT=0006/"$SCENE"
+DATA_ROOT=data/360_v2_20
 DATA_DIR="$DATA_ROOT"/"$SCENE"
 
 accelerate launch render.py \
@@ -12,4 +12,5 @@ accelerate launch render.py \
   --gin_bindings="Config.render_path = True" \
   --gin_bindings="Config.render_path_frames = 120" \
   --gin_bindings="Config.render_video_fps = 30" \
-  --gin_bindings="Config.factor = 4"
+  --gin_bindings="Config.factor = 4" \
+  --gin_bindings="Config.render_chunk_size = 8192" 

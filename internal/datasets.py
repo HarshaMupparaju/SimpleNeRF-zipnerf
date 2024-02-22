@@ -10,16 +10,18 @@ from internal import raw_utils
 from internal import utils
 from collections import defaultdict
 import numpy as np
+import pandas as pd
 import cv2
 from PIL import Image
 import torch
 from tqdm import tqdm
+
 # This is ugly, but it works.
 import sys
 
-# sys.path.insert(0, 'internal/pycolmap')
-# sys.path.insert(0, 'internal/pycolmap/pycolmap')
-from .pycolmap import pycolmap
+sys.path.insert(0, 'internal/pycolmap')
+sys.path.insert(0, 'internal/pycolmap/pycolmap')
+import pycolmap
 
 
 def load_dataset(split, train_dir, config: configs.Config):
@@ -59,27 +61,34 @@ class NeRFSceneManager(pycolmap.SceneManager):
     """
 
         self.load_cameras()
-        self.load_images()
+        # self.load_images()
+        # self.load_images_reduced() # Load images from smaller set
         # self.load_points3D()  # For now, we do not need the point cloud data.
+
+        self.load_intrinsics_extrinsics()
+
+        self.image_names = os.listdir(self.images_folder)
 
         # Assume shared intrinsics between all cameras.
         cam = self.cameras[1]
 
         # Extract focal lengths and principal point parameters.
-        fx, fy, cx, cy = cam.fx, cam.fy, cam.cx, cam.cy
-        pixtocam = np.linalg.inv(camera_utils.intrinsic_matrix(fx, fy, cx, cy))
+        # fx, fy, cx, cy = cam.fx, cam.fy, cam.cx, cam.cy
+        pixtocam = np.linalg.inv(self.intrinsics[0].reshape(3, 3))
 
         # Extract extrinsic matrices in world-to-camera format.
-        imdata = self.images
-        w2c_mats = []
-        bottom = np.array([0, 0, 0, 1]).reshape(1, 4)
-        for k in imdata:
-            im = imdata[k]
-            rot = im.R()
-            trans = im.tvec.reshape(3, 1)
-            w2c = np.concatenate([np.concatenate([rot, trans], 1), bottom], axis=0)
-            w2c_mats.append(w2c)
-        w2c_mats = np.stack(w2c_mats, axis=0)
+        # imdata = self.images
+        # w2c_mats = []
+        # bottom = np.array([0, 0, 0, 1]).reshape(1, 4)
+        # for k in imdata:
+        #     im = imdata[k]
+        #     rot = im.R()
+        #     trans = im.tvec.reshape(3, 1)
+        #     w2c = np.concatenate([np.concatenate([rot, trans], 1), bottom], axis=0)
+        #     w2c_mats.append(w2c)
+        # w2c_mats = np.stack(w2c_mats, axis=0)
+
+        w2c_mats = self.extrinsics.reshape(-1, 4, 4)
 
         # Convert extrinsics to camera-to-world.
         c2w_mats = np.linalg.inv(w2c_mats)
@@ -87,7 +96,11 @@ class NeRFSceneManager(pycolmap.SceneManager):
 
         # Image names from COLMAP. No need for permuting the poses according to
         # image names anymore.
-        names = [imdata[k].name for k in imdata]
+        # names = [imdata[k].name for k in imdata]
+
+        names = [int(i[:-4]) for i in self.image_names]
+        names.sort()
+        names = [f'{i:04d}{self.image_names[0][-4:]}' for i in names]
 
         # Switch from COLMAP (right, down, fwd) to NeRF (right, up, back) frame.
         poses = poses @ np.diag([1, -1, -1, 1])
@@ -130,7 +143,22 @@ class NeRFSceneManager(pycolmap.SceneManager):
             params['k4'] = cam.k4
             camtype = camera_utils.ProjectionType.FISHEYE
 
-        return names, poses, pixtocam, params, camtype
+        all_poses = poses
+        pose_indexes = []
+        # for l in self.images_reduced:
+        #     im = self.images_reduced[l]
+        #     if(im.name in names):
+        #         idx = names.index(im.name)
+        #         pose_indexes.append(idx)
+
+        for idx in self.imgs_in_set:
+            pose_indexes.append(idx)
+
+        poses = poses[pose_indexes]
+        names = [names[i] for i in pose_indexes]
+
+
+        return names, all_poses, poses, pixtocam, params, camtype
 
 
 def load_blender_posedata(data_dir, split=None):
@@ -252,6 +280,18 @@ class Dataset(torch.utils.data.Dataset):
         self.world_size = config.world_size
         self.split = utils.DataSplit(split)
         self.data_dir = data_dir
+        self.camera_data_dir = config.camera_data_dir
+
+        self.train_test_split_dir = config.train_test_split_dir
+
+        self.train_split = None
+
+        self.indices = None
+
+        self.sparse_depth_dir = config.sparse_depth_dir
+        self.sparse_depth_batch_size = config.sparse_depth_batch_size
+        self.sparse_depth_dict = None
+
         self.near = config.near
         self.far = config.far
         self.render_path = config.render_path
@@ -266,6 +306,8 @@ class Dataset(torch.utils.data.Dataset):
         self.exposures = None
         self.render_exposures = None
 
+        self.scale_factor = None
+
         # Providing type comments for these attributes, they must be correctly
         # initialized by _load_renderings() (see docstring) in any subclass.
         self.images: np.ndarray = None
@@ -274,8 +316,15 @@ class Dataset(torch.utils.data.Dataset):
         self.height: int = None
         self.width: int = None
 
+
+
         # Load data from disk using provided config parameters.
         self._load_renderings(config)
+
+        # Load Sparse Depth data from csvs if training
+        if self.split == utils.DataSplit.TRAIN and config.sparse_depth_needed:
+            self.load_sparse_depth(config)
+
 
         if self.render_path:
             if config.render_path_file is not None:
@@ -308,6 +357,33 @@ class Dataset(torch.utils.data.Dataset):
             self._next_fn = self._next_train
         else:
             self._next_fn = self._next_test
+
+    def load_sparse_depth(self, config):
+        sparse_depth_csvs_dirpath = os.path.join(self.sparse_depth_dir, f'estimated_depths_down{config.factor}')
+        sparse_depth_csvs = [os.path.join(sparse_depth_csvs_dirpath, f) for f in os.listdir(sparse_depth_csvs_dirpath) if f.endswith('.csv')]
+        sparse_depth_csvs.sort()
+
+        sparse_depth_dict = defaultdict(list)
+        for csv_file in sparse_depth_csvs:
+            image_number = int(os.path.basename(csv_file).split('.')[0])
+
+            image_idx = self.imgs_in_set.index(image_number)
+            image_id_reduced = np.where(self.indices == image_idx)[0][0]
+
+            df = pd.read_csv(csv_file)
+            df['depth'] = df['depth']*self.scale_factor
+            sparse_depth_dict[image_id_reduced] = df
+
+        number_of_sparse_flow_instances = 0
+        for cam_id in sparse_depth_dict.keys():
+            number_of_sparse_flow_instances += len(sparse_depth_dict[cam_id])
+
+        if(number_of_sparse_flow_instances < self.sparse_depth_batch_size):
+            self.sparse_depth_batch_size = number_of_sparse_flow_instances
+            self.config.sparse_depth_batch_size = number_of_sparse_flow_instances
+
+        self.sparse_depth_dict = sparse_depth_dict
+
 
     @property
     def size(self):
@@ -342,6 +418,8 @@ class Dataset(torch.utils.data.Dataset):
                         pix_x_int,
                         pix_y_int,
                         cam_idx,
+                        original_batch_mask,
+                        sparse_depth,
                         lossmult=None
                         ):
         """Creates ray data batch from pixel coordinates and camera indices.
@@ -387,6 +465,8 @@ class Dataset(torch.utils.data.Dataset):
         # Slow path, do ray computation using numpy (on CPU).
         batch = camera_utils.cast_ray_batch(self.cameras, pixels, self.camtype)
         batch['cam_dirs'] = -self.camtoworlds[ray_kwargs['cam_idx'][..., 0]][..., :3, 2]
+        batch['original_batch_mask'] = original_batch_mask
+        batch['sparse_depth'] = sparse_depth
 
         # import trimesh
         # pts = batch['origins'][..., None, :] + batch['directions'][..., None, :] * np.linspace(0, 1, 5)[:, None]
@@ -436,7 +516,53 @@ class Dataset(torch.utils.data.Dataset):
         else:
             lossmult = None
 
-        return self._make_ray_batch(pix_x_int, pix_y_int, cam_idx,
+        if(self.split == utils.DataSplit.TRAIN and self.config.sparse_depth_needed):
+            #Preprocess sparse depth data
+            cam_id_sparse_depth = []
+            x_sparse_depth = []
+            y_sparse_depth = []
+            additional_sparse_depth = []
+            for cam_id in self.sparse_depth_dict.keys():
+                sparse_depth_data = self.sparse_depth_dict[cam_id]
+                cam_id_sparse_depth.extend([cam_id] * len(sparse_depth_data))
+                x_sparse_depth.extend(sparse_depth_data['x'].values)
+                y_sparse_depth.extend(sparse_depth_data['y'].values)
+                additional_sparse_depth.extend(sparse_depth_data['depth'].values)
+
+            cam_id_sparse_depth = np.array(cam_id_sparse_depth)
+            x_sparse_depth = np.array(x_sparse_depth)
+            y_sparse_depth = np.array(y_sparse_depth)
+            additional_sparse_depth = np.array(additional_sparse_depth)
+
+            #Randomly pick sparse depth data
+            if(len(cam_id_sparse_depth) < self.sparse_depth_batch_size):
+                self.sparse_depth_batch_size = len(cam_id_sparse_depth)
+                self.config.sparse_depth_batch_size = len(cam_id_sparse_depth)
+            # sparse_depth_idx = np.random.choice(len(cam_id_sparse_depth), self.sparse_depth_batch_size, replace=False)
+
+            #Pick Sparse Depth indexes where the sparse depths are not negative
+            sparse_depth_idx = np.random.choice(np.where(additional_sparse_depth > 0)[0], self.sparse_depth_batch_size, replace=False)
+
+            cam_idx_sparse_depth = cam_id_sparse_depth[sparse_depth_idx].reshape(-1, 1, 1)
+            pix_x_int_sparse_depth = x_sparse_depth[sparse_depth_idx].astype(int).reshape(-1, 1, 1)
+            pix_y_int_sparse_depth = y_sparse_depth[sparse_depth_idx].astype(int).reshape(-1, 1, 1)
+            additional_sparse_depth = additional_sparse_depth[sparse_depth_idx].reshape(-1, 1, 1)
+
+            #Concatenate sparse depth data with the original data
+            pix_x_int = np.concatenate([pix_x_int, pix_x_int_sparse_depth], axis=0)
+            pix_y_int = np.concatenate([pix_y_int, pix_y_int_sparse_depth], axis=0)
+            cam_idx = np.concatenate([cam_idx, cam_idx_sparse_depth], axis=0)
+
+
+
+
+        original_batch_mask = np.ones((self._batch_size,1,1), dtype=bool)
+        sparse_depth = np.zeros((self._batch_size, 1, 1))
+        if(self.split == utils.DataSplit.TRAIN and self.config.sparse_depth_needed):
+            original_batch_mask = np.concatenate([original_batch_mask, np.zeros((self.sparse_depth_batch_size,1,1), dtype=bool)], axis=0)
+            sparse_depth = np.concatenate([sparse_depth, additional_sparse_depth], axis=0)
+
+        return self._make_ray_batch(pix_x_int, pix_y_int, cam_idx, original_batch_mask, sparse_depth,
                                     lossmult=lossmult)
 
     def generate_ray_batch(self, cam_idx: int):
@@ -450,13 +576,16 @@ class Dataset(torch.utils.data.Dataset):
             # Generate rays for all pixels in the image.
             pix_x_int, pix_y_int = camera_utils.pixel_coordinates(
                 self.width, self.height)
-            return self._make_ray_batch(pix_x_int, pix_y_int, cam_idx)
+            original_batch_mask = np.ones((self.height, self.width))
+            sparse_depth = np.zeros((self.height, self.width))
+            return self._make_ray_batch(pix_x_int, pix_y_int, cam_idx, original_batch_mask, sparse_depth)
 
     def _next_test(self, item):
         """Sample next test batch (one full image)."""
         return self.generate_ray_batch(item)
 
     def collate_fn(self, item):
+        ## What are items?
         return self._next_fn(item[0])
 
     def __getitem__(self, item):
@@ -530,22 +659,54 @@ class LLFF(Dataset):
         # we train raw at full resolution because of the Bayer mosaic pattern).
         if config.factor > 0 and not (config.rawnerf_mode and
                                       self.split == utils.DataSplit.TRAIN):
-            image_dir_suffix = f'_{config.factor}'
+            image_dir_suffix = f'_down{config.factor}'
             factor = config.factor
         else:
             factor = 1
 
         # Copy COLMAP data to local disk for faster loading.
-        colmap_dir = os.path.join(self.data_dir, 'sparse/0/')
+        # colmap_dir = os.path.join(self.data_dir, 'sparse/0/')
+        colmap_dir = os.path.join(self.camera_data_dir, 'sparse/0/')
+        intrinsics_file = os.path.join(self.data_dir, 'CameraIntrinsics.csv')
+        extrinsics_file = os.path.join(self.data_dir, 'CameraExtrinsics.csv')
+        images_folder = os.path.join(self.data_dir, 'rgb')
+
+        #Load csv files
+
+        train_split_file = os.path.join(self.train_test_split_dir, 'TrainVideosData.csv')
+        test_split_file = os.path.join(self.train_test_split_dir, 'TestVideosData.csv')
+        train_split = []
+        with open(train_split_file, 'r') as f:
+            for line in f:
+
+                l = line.split(',')
+                if(l[0] == config.scene_name):
+                    temp_img = int(l[1:][0][:-1])
+                    train_split.append(temp_img)
+
+        test_split = []
+        with open(test_split_file, 'r') as f:
+            for line in f:
+                l = line.split(',')
+                if(l[0] == config.scene_name):
+                    temp_img = int(l[1:][0][:-1])
+                    test_split.append(temp_img)
+
+        imgs_in_set = train_split + test_split
+
+        imgs_in_set.sort()
+
+        # self.train_split = train_split
+        self.imgs_in_set = imgs_in_set
 
         # Load poses.
-        if utils.file_exists(colmap_dir):
-            pose_data = NeRFSceneManager(colmap_dir).process()
+        if utils.file_exists(extrinsics_file) and utils.file_exists(intrinsics_file):
+            pose_data = NeRFSceneManager(colmap_dir, images_folder, extrinsics_file, intrinsics_file, imgs_in_set).process()
         else:
             # # Attempt to load Blender/NGP format if COLMAP data not present.
             # pose_data = load_blender_posedata(self.data_dir)
             raise ValueError('COLMAP data not found.')
-        image_names, poses, pixtocam, distortion_params, camtype = pose_data
+        image_names, all_poses, poses, pixtocam, distortion_params, camtype = pose_data
 
         # Previous NeRF results were generated with images sorted by filename,
         # use this flag to ensure metrics are reported on the same test set.
@@ -577,27 +738,41 @@ class LLFF(Dataset):
             # Rescale according to a default bd factor.
             scale = 1. / (bounds.min() * .75)
             poses[:, :3, 3] *= scale
+            all_poses[:, :3, 3] *= scale
             self.colmap_to_world_transform = np.diag([scale] * 3 + [1])
             bounds *= scale
             # Recenter poses.
             poses, transform = camera_utils.recenter_poses(poses)
+            all_poses, all_transform = camera_utils.recenter_poses(all_poses)
             self.colmap_to_world_transform = (
                     transform @ self.colmap_to_world_transform)
             # Forward-facing spiral render path.
             self.render_poses = camera_utils.generate_spiral_path(
                 poses, bounds, n_frames=config.render_path_frames)
         else:
+
             # Rotate/scale poses to align ground with xy plane and fit to unit cube.
-            poses, transform = camera_utils.transform_poses_pca(poses)
+            train_poses_idx = []
+            for i in train_split:
+                train_poses_idx.append(imgs_in_set.index(i))
+
+            train_poses = poses[train_poses_idx]
+            train_poses, transform, scale_factor = camera_utils.transform_poses_pca(train_poses)
+            for i in train_poses_idx:
+                poses[i] = train_poses[train_poses_idx.index(i)]
+
+            all_poses, all_transform, all_scale_factor = camera_utils.transform_poses_pca(all_poses)
+            self.scale_factor = scale_factor
             self.colmap_to_world_transform = transform
             if config.render_spline_keyframes is not None:
                 rets = camera_utils.create_render_spline_path(config, image_names,
                                                               poses, self.exposures)
                 self.spline_indices, self.render_poses, self.render_exposures = rets
             else:
+
                 # Automatically generated inward-facing elliptical render path.
                 self.render_poses = camera_utils.generate_ellipse_path(
-                    poses,
+                    all_poses,
                     n_frames=config.render_path_frames,
                     z_variation=config.z_variation,
                     z_phase=config.z_phase)
@@ -607,16 +782,24 @@ class LLFF(Dataset):
         if config.llff_use_all_images_for_training:
             train_indices = all_indices
         else:
-            train_indices = all_indices % config.llffhold != 0
+            # train_indices = all_indices % config.llffhold != 0
+            train_indices = []
+            for i in train_split:
+                train_indices.append(imgs_in_set.index(i))
+
         if config.llff_use_all_images_for_testing:
             test_indices = all_indices
         else:
-            test_indices = all_indices % config.llffhold == 0
+            # test_indices = all_indices % config.llffhold == 0
+            test_indices = []
+            for i in test_split:
+                test_indices.append(imgs_in_set.index(i))
         split_indices = {
-            utils.DataSplit.TEST: all_indices[test_indices],
-            utils.DataSplit.TRAIN: all_indices[train_indices],
+            utils.DataSplit.TEST: np.array(test_indices).astype(int),
+            utils.DataSplit.TRAIN: np.array(train_indices).astype(int),
         }
         indices = split_indices[self.split]
+        self.indices = indices
         image_names = [image_names[i] for i in indices]
         poses = poses[indices]
         # if self.split == utils.DataSplit.TRAIN:
@@ -639,8 +822,8 @@ class LLFF(Dataset):
 
         else:
             # Load images.
-            colmap_image_dir = os.path.join(self.data_dir, 'images')
-            image_dir = os.path.join(self.data_dir, 'images' + image_dir_suffix)
+            colmap_image_dir = os.path.join(self.data_dir, 'rgb')
+            image_dir = os.path.join(self.data_dir, 'rgb' + image_dir_suffix)
             for d in [image_dir, colmap_image_dir]:
                 if not utils.file_exists(d):
                     raise ValueError(f'Image folder {d} does not exist.')

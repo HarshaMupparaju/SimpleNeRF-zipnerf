@@ -45,7 +45,7 @@ def create_videos(config, base_dir, out_dir, out_name, num_frames):
     # lo, hi = [config.render_dist_curve_fn(x) for x in distance_limits]
     depth_curve_fn = lambda x: -np.log(x + np.finfo(np.float32).eps)
     lo, hi = distance_limits
-    print(f'Video shape is {shape[:2]}')
+
 
     for k in ['color', 'normals', 'acc', 'distance_mean', 'distance_median']:
         video_file = os.path.join(base_dir, f'{video_prefix}_{k}.mp4')

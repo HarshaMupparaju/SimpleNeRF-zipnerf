@@ -172,8 +172,16 @@ def main(unused_argv):
                     train_frac=train_frac,
                     compute_extras=compute_extras,
                     zero_glo=False)
-
+                # print(f"Renderings Keys: {renderings[0].keys()}")
+                # print(f"Ray_history Keys: {ray_history[0].keys()}")
+                # print(f"Renderings Keys: {renderings[1].keys()}")
+                # print(f"Ray_history Keys: {ray_history[1].keys()}")
+                # print(f"Renderings Keys: {renderings[2].keys()}")
+                # print(f"Ray_history Keys: {ray_history[2].keys()}")
+                # print(1/0)
             losses = {}
+
+            # print(f"Rendered Depth : {torch.sum(renderings[2]['depth'][-1-config.sparse_depth_batch_size:-1])}, Ground Truth Depth : {torch.sum(batch['sparse_depth'][-1-config.sparse_depth_batch_size:-1])}")
 
             # supervised by data
             data_loss, stats = train_utils.compute_data_loss(batch, renderings, config)
@@ -181,19 +189,19 @@ def main(unused_argv):
 
             # interlevel loss in MipNeRF360
             if config.interlevel_loss_mult > 0 and not module.single_mlp:
-                losses['interlevel'] = train_utils.interlevel_loss(ray_history, config)
+                losses['interlevel'] = train_utils.interlevel_loss(batch, ray_history, config)
 
             # interlevel loss in ZipNeRF360
             if config.anti_interlevel_loss_mult > 0 and not module.single_mlp:
-                losses['anti_interlevel'] = train_utils.anti_interlevel_loss(ray_history, config)
+                losses['anti_interlevel'] = train_utils.anti_interlevel_loss(batch, ray_history, config)
 
             # distortion loss
             if config.distortion_loss_mult > 0:
-                losses['distortion'] = train_utils.distortion_loss(ray_history, config)
+                losses['distortion'] = train_utils.distortion_loss(batch, ray_history, config)
 
             # opacity loss
             if config.opacity_loss_mult > 0:
-                losses['opacity'] = train_utils.opacity_loss(renderings, config)
+                losses['opacity'] = train_utils.opacity_loss(batch, renderings, config)
 
             # orientation loss in RefNeRF
             if (config.orientation_coarse_loss_mult > 0 or
@@ -208,7 +216,16 @@ def main(unused_argv):
             if (config.predicted_normal_coarse_loss_mult > 0 or
                     config.predicted_normal_loss_mult > 0):
                 losses['predicted_normals'] = train_utils.predicted_normal_loss(
-                    module, ray_history, config)
+                    batch, module, ray_history, config)
+                
+            # depth supervision loss
+            # losses['penalizing_depths'] = train_utils.penalize_depth_loss(renderings, config)
+
+            #SimpleNeRF sparse depth loss
+            if (config.sparse_depth_coarse_loss_mult > 0):
+                losses['sparse_depth'] = train_utils.sparse_depth_loss(batch, renderings, config)
+
+
             loss = sum(losses.values())
             stats['loss'] = loss.item()
             stats['losses'] = tree_map(lambda x: x.item(), losses)
@@ -307,9 +324,16 @@ def main(unused_argv):
                     checkpoints.save_checkpoint(config.checkpoint_dir,
                                                 accelerator, step,
                                                 config.checkpoints_total_limit)
+                    
+                if (step % 5000 == 0):
+                    # save a checkpoint every 5000 steps
+                    checkpoints.save_checkpoint(config.checkpoint_dir,
+                                                accelerator, step,
+                                                config.checkpoints_total_limit)
 
             # Test-set evaluation.
             if config.train_render_every > 0 and step % config.train_render_every == 0:
+            # if config.train_render_every > 0 and step % 1 == 0:
                 # We reuse the same random number generator from the optimization step
                 # here on purpose so that the visualization matches what happened in
                 # training.

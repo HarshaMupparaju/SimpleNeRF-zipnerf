@@ -168,9 +168,9 @@ def cast_rays(tdist, origins, directions, cam_dirs, radii, rand=True, n=7, m=3, 
         stds = std_scale * radii * t / 2 ** 0.5
 
         # two basis in parallel to the image plane
-        rand_vec = torch.randn_like(directions)
-        ortho1 = F.normalize(torch.cross(directions, rand_vec, dim=-1), dim=-1)
-        ortho2 = F.normalize(torch.cross(directions, ortho1, dim=-1), dim=-1)
+        rand_vec = torch.randn_like(cam_dirs)
+        ortho1 = F.normalize(torch.cross(cam_dirs, rand_vec, dim=-1), dim=-1)
+        ortho2 = F.normalize(torch.cross(cam_dirs, ortho1, dim=-1), dim=-1)
 
         # just use directions to be the third vector of the orthonormal basis,
         # while the cross section of cone is parallel to the image plane
@@ -210,6 +210,8 @@ def volumetric_rendering(rgbs,
                          tdist,
                          bg_rgbs,
                          t_far,
+                         # sdist,
+                         t_to_s,
                          compute_extras,
                          extras=None):
     """Volumetric Rendering Function.
@@ -235,14 +237,24 @@ def volumetric_rendering(rgbs,
     bg_w = (1 - acc[..., None]).clamp_min(0.)  # The weight of the background.
     rgb = (weights[..., None] * rgbs).sum(dim=-2) + bg_w * bg_rgbs
     t_mids = 0.5 * (tdist[..., :-1] + tdist[..., 1:])
+    # s_mids = 0.5 * (sdist[..., :-1] + sdist[..., 1:])
     depth = (
         torch.clip(
             torch.nan_to_num((weights * t_mids).sum(dim=-1) / acc.clamp_min(eps), torch.inf),
             tdist[..., 0], tdist[..., -1]))
 
+    # sdepth = (
+    #     torch.clip(
+    #         torch.nan_to_num((weights * s_mids).sum(dim=-1) / acc.clamp_min(eps), torch.inf),
+    #         sdist[..., 0], sdist[..., -1]))
+
+    # sdepth = t_to_s(depth.reshape(-1,1,1,1)).reshape(-1, 1, 1)
+    sdepth = t_to_s(depth)[0]
+
     rendering['rgb'] = rgb
     rendering['depth'] = depth
     rendering['acc'] = acc
+    rendering['sdepth'] = sdepth
 
     if compute_extras:
         if extras is not None:
