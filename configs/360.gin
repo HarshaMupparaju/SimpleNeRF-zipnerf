@@ -10,6 +10,7 @@ Config.sparse_depth_coarse_loss_mult = 0.01
 Model.raydist_fn = 'power_transformation'
 Model.opaque_background = True
 Model.prop_disired_grid_size = [512, 2048]
+Model.aug_prop_disired_grid_size = [512, 2048]
 
 PropMLP.disable_density_normals = True
 PropMLP.disable_rgb = True
@@ -20,4 +21,14 @@ NerfMLP.grid_base_resolution = 16
 NerfMLP.grid_disired_resolution = 8192
 NerfMLP.grid_num_levels = 10
 NerfMLP.grid_log2_hashmap_size = 21
+
+aug_NerfMLP1.disable_density_normals = True
+aug_NerfMLP1.grid_base_resolution = 16
+aug_NerfMLP1.grid_disired_resolution = 4096
+aug_NerfMLP1.grid_num_levels = 10
+aug_NerfMLP1.grid_log2_hashmap_size = 10
+
+aug_PropMLP1.disable_density_normals = True
+aug_PropMLP1.disable_rgb = True
+aug_PropMLP1.grid_level_dim = 1
 

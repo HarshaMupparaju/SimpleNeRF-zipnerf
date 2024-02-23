@@ -60,6 +60,12 @@ class Config:
     scene_name: str = "bonsai"  # The name of the scene.
 
 
+    #Augmentation Configs
+    augmentation1_required: bool = False
+
+    augmentation_loss_mult: float = 0.1  # Multiplier on the augmentation loss.
+
+
     vocab_tree_path: Optional[str] = None  # Path to vocab tree for COLMAP.
     render_chunk_size: int = 65536  # Chunk size for whole-image renderings.
     num_showcase_images: int = 5  # The number of test-set images to showcase.

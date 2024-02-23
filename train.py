@@ -67,7 +67,22 @@ def main(unused_argv):
     accelerate.utils.set_seed(config.seed, device_specific=True)
     # setup model and optimizer
     model = models.Model(config=config)
-    optimizer, lr_fn = train_utils.create_optimizer(config, model)
+
+    if config.augmentation1_required:
+        aug_model = models.aug_Model(config=config, augmentation1=True)
+
+    if(config.augmentation1_required):
+        model_parameters = list(model.parameters()) + list(aug_model.parameters())
+    else:
+        model_parameters = list(model.parameters())
+
+
+
+    optimizer, lr_fn = train_utils.create_optimizer(config, model_parameters)
+    if config.augmentation1_required:
+        # aug_optimizer, aug_lr_fn = train_utils.create_optimizer(config, aug_model)
+        aug_optimizer = optimizer
+
 
     # load dataset
     dataset = datasets.load_dataset('train', config.data_dir, config)
@@ -96,6 +111,8 @@ def main(unused_argv):
 
     # use accelerate to prepare.
     model, dataloader, optimizer = accelerator.prepare(model, dataloader, optimizer)
+    if config.augmentation1_required:
+        aug_model, dataloader, aug_optimizer = accelerator.prepare(aug_model, dataloader, aug_optimizer)
 
     if config.resume_from_checkpoint:
         init_step = checkpoints.restore_checkpoint(config.checkpoint_dir, accelerator, logger)
@@ -165,6 +182,8 @@ def main(unused_argv):
             # Indicates whether we need to compute output normal or depth maps in 2D.
             compute_extras = (config.compute_disp_metrics or config.compute_normal_metrics)
             optimizer.zero_grad()
+            if config.augmentation1_required:
+                aug_optimizer.zero_grad()
             with accelerator.autocast():
                 renderings, ray_history = model(
                     True,
@@ -172,6 +191,13 @@ def main(unused_argv):
                     train_frac=train_frac,
                     compute_extras=compute_extras,
                     zero_glo=False)
+                if config.augmentation1_required:
+                    aug_renderings, aug_ray_history = aug_model(
+                        True,
+                        batch,
+                        train_frac=train_frac,
+                        compute_extras=compute_extras,
+                        zero_glo=False)
                 # print(f"Renderings Keys: {renderings[0].keys()}")
                 # print(f"Ray_history Keys: {ray_history[0].keys()}")
                 # print(f"Renderings Keys: {renderings[1].keys()}")
@@ -179,9 +205,11 @@ def main(unused_argv):
                 # print(f"Renderings Keys: {renderings[2].keys()}")
                 # print(f"Ray_history Keys: {ray_history[2].keys()}")
                 # print(1/0)
+
+
             losses = {}
 
-            # print(f"Rendered Depth : {torch.sum(renderings[2]['depth'][-1-config.sparse_depth_batch_size:-1])}, Ground Truth Depth : {torch.sum(batch['sparse_depth'][-1-config.sparse_depth_batch_size:-1])}")
+            print(f"Rendered Depth : {torch.sum(renderings[2]['depth'][-1-config.sparse_depth_batch_size:-1])}, Ground Truth Depth : {torch.sum(batch['sparse_depth'][-1-config.sparse_depth_batch_size:-1])}")
 
             # supervised by data
             data_loss, stats = train_utils.compute_data_loss(batch, renderings, config)
@@ -225,6 +253,9 @@ def main(unused_argv):
             if (config.sparse_depth_coarse_loss_mult > 0):
                 losses['sparse_depth'] = train_utils.sparse_depth_loss(batch, renderings, config)
 
+            if (config.augmentation_loss_mult > 0):
+                losses['augmentation'] = train_utils.augmentation_loss(batch, renderings, aug_renderings, config)
+
 
             loss = sum(losses.values())
             stats['loss'] = loss.item()
@@ -235,6 +266,8 @@ def main(unused_argv):
             # clip gradient by max/norm/nan
             train_utils.clip_gradients(model, accelerator, config)
             optimizer.step()
+            if config.augmentation1_required:
+                aug_optimizer.step()
 
             stats['psnrs'] = image.mse_to_psnr(stats['mses'])
             stats['psnr'] = stats['psnrs'][-1]
