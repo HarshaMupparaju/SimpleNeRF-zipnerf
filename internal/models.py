@@ -57,8 +57,7 @@ class Model(nn.Module):
     power_lambda: float = -1.5
     std_scale: float = 0.5
     prop_desired_grid_size = [512, 2048]
-    aug_prop_desired_grid_size1 = [500, 2000]
-    # prop_desired_grid_size = [2**4, 2**6]
+    aug_prop_desired_grid_size = [8, 32]
 
     def __init__(self, config=None, augmentation1=False, augmentation2=False, **kwargs):
         super().__init__()
@@ -94,7 +93,7 @@ class Model(nn.Module):
                     self.register_module(f'prop_mlp_{i}', PropMLP(grid_disired_resolution=self.prop_desired_grid_size[i]))
             else:
                 for i in range(self.num_levels - 1):
-                    self.register_module(f'prop_mlp_{i}', aug_PropMLP1(grid_disired_resolution=self.aug_prop_desired_grid_size1[i]))
+                    self.register_module(f'prop_mlp_{i}', aug_PropMLP1(grid_disired_resolution=self.aug_prop_desired_grid_size[i]))
 
 
         if self.num_glo_features > 0 and not config.zero_glo:
@@ -141,12 +140,12 @@ class Model(nn.Module):
             glo_vec = None
 
         # Define the mapping from normalized to metric ray distance.
-        # if(augmentation):
-        #     near_for_t_and_s = torch.ones_like(batch['near']) * self.config.aug_near
-        # else:
-        #     near_for_t_and_s = batch['near']
-        # t_to_s, s_to_t = coord.construct_ray_warps(self.raydist_fn, near_for_t_and_s, batch['far'], self.power_lambda)
-        t_to_s, s_to_t = coord.construct_ray_warps(self.raydist_fn, batch['near'], batch['far'], self.power_lambda)
+        if(augmentation):
+            near_for_t_and_s = torch.ones_like(batch['near']) * self.config.aug_near
+        else:
+            near_for_t_and_s = batch['near']
+        t_to_s, s_to_t = coord.construct_ray_warps(self.raydist_fn, near_for_t_and_s, batch['far'], self.power_lambda)
+        # t_to_s, s_to_t = coord.construct_ray_warps(self.raydist_fn, batch['near'], batch['far'], self.power_lambda)
 
         #Changing sparse depths from t to s
         batch['sparse_depth'] = t_to_s(batch['sparse_depth'].reshape(-1,1,1))[0].reshape(-1, 1, 1)

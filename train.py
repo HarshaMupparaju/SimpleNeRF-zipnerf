@@ -79,9 +79,6 @@ def main(unused_argv):
 
 
     optimizer, lr_fn = train_utils.create_optimizer(config, model_parameters)
-    if config.augmentation1_required:
-        # aug_optimizer, aug_lr_fn = train_utils.create_optimizer(config, aug_model)
-        aug_optimizer = optimizer
 
 
     # load dataset
@@ -112,7 +109,7 @@ def main(unused_argv):
     # use accelerate to prepare.
     model, dataloader, optimizer = accelerator.prepare(model, dataloader, optimizer)
     if config.augmentation1_required:
-        aug_model, dataloader, aug_optimizer = accelerator.prepare(aug_model, dataloader, aug_optimizer)
+        aug_model = accelerator.prepare(aug_model)
 
     if config.resume_from_checkpoint:
         init_step = checkpoints.restore_checkpoint(config.checkpoint_dir, accelerator, logger)
@@ -182,8 +179,6 @@ def main(unused_argv):
             # Indicates whether we need to compute output normal or depth maps in 2D.
             compute_extras = (config.compute_disp_metrics or config.compute_normal_metrics)
             optimizer.zero_grad()
-            if config.augmentation1_required:
-                aug_optimizer.zero_grad()
             with accelerator.autocast():
                 renderings, ray_history = model(
                     True,
@@ -268,8 +263,6 @@ def main(unused_argv):
             # clip gradient by max/norm/nan
             train_utils.clip_gradients(model, accelerator, config)
             optimizer.step()
-            if config.augmentation1_required:
-                aug_optimizer.step()
 
             stats['psnrs'] = image.mse_to_psnr(stats['mses'])
             stats['psnr'] = stats['psnrs'][-1]

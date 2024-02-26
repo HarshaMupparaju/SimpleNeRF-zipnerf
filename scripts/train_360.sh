@@ -1,12 +1,12 @@
 #!/bin/bash
 
-EXP_NUM=7152
+EXP_NUM=7205
 SET_NUM=04
 SPARSE_DEPTH_SET_NUM=24
 
 # declare -a scenes=("bonsai" "counter" "garden" "kitchen" "room" "stump")
-# declare -a scenes=("bicycle" "bonsai" "kitchen")
-declare -a scenes=("bonsai")
+declare -a scenes=("kitchen" "bonsai" "bicycle")
+# declare -a scenes=("bonsai")
 for SCENE in "${scenes[@]}"
 do
 
@@ -25,7 +25,7 @@ do
     --gin_bindings="Config.sparse_depth_batch_size = 2048" \
     --gin_bindings="Config.factor = 4" \
     --gin_bindings="Config.batch_size = 8192" \
-    --gin_bindings="Config.render_chunk_size = 8192" 
+    --gin_bindings="Config.render_chunk_size = 4096" 
 
   #Rendering 
 
@@ -40,7 +40,7 @@ do
     --gin_bindings="Config.render_path_frames = 120" \
     --gin_bindings="Config.render_video_fps = 15" \
     --gin_bindings="Config.factor = 4" \
-    --gin_bindings="Config.render_chunk_size = 8192" 
+    --gin_bindings="Config.render_chunk_size = 4096" 
 
   #Evaluation
   accelerate launch eval.py \
@@ -51,7 +51,7 @@ do
     --gin_bindings="Config.exp_name = '${EXPERIMENT}'" \
     --gin_bindings="Config.scene_name = '${SCENE}'" \
     --gin_bindings="Config.factor = 4" \
-    --gin_bindings="Config.render_chunk_size = 8192"
+    --gin_bindings="Config.render_chunk_size = 4096"
   
 done
 
