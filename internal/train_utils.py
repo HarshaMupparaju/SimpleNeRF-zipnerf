@@ -350,6 +350,37 @@ def sparse_depth_loss(batch, renderings, config):
     total_loss = config.sparse_depth_coarse_loss_mult * total_loss
     return total_loss
 
+# def augmentation_loss(batch, renderings, aug_renderings, config):
+#     indices_mask = batch['original_batch_mask'].reshape(-1).bool()
+#     total_loss = 0
+#     rendering = renderings[2]
+#     aug_rendering = aug_renderings[2]
+#
+#     depth_main = rendering['depth'][indices_mask].reshape(config.batch_size)
+#     depth_aug = aug_rendering['depth'][indices_mask].reshape(config.batch_size)
+#     total_loss = torch.mean((depth_main - depth_aug) ** 2)
+#     total_loss = config.augmentation_loss_mult * total_loss
+#
+#     return total_loss
+
+def augmentation_loss(batch, renderings, aug_renderings, config):
+    # indices_mask = batch['original_batch_mask'].reshape(-1).bool()
+
+    # rays_o = batch['origins'][indices_mask].reshape(config.batch_size, 1, 1, -1)
+    # rays_d = batch['directions'][indices_mask].reshape(config.batch_size, 1, 1, -1)
+    indices_mask = batch['original_batch_mask'].reshape(-1).bool()
+    total_loss = 0
+    rendering = renderings[2]
+    aug_rendering = aug_renderings[2]
+
+    depth_main = rendering['depth'][indices_mask].reshape(config.batch_size)
+    depth_aug = aug_rendering['depth'][indices_mask].reshape(config.batch_size)
+    total_loss = torch.mean((depth_main - depth_aug) ** 2)
+    total_loss = config.augmentation_loss_mult * total_loss
+
+    return total_loss
+
+
 def clip_gradients(model, accelerator, config):
     """Clips gradients of MLP based on norm and max value."""
     if config.grad_max_norm > 0 and accelerator.sync_gradients:
@@ -363,7 +394,7 @@ def clip_gradients(model, accelerator, config):
         param.grad.nan_to_num_()
 
 
-def create_optimizer(config: configs.Config, model):
+def create_optimizer(config: configs.Config, model_parameters):
     """Creates optax optimizer for model training."""
     adam_kwargs = {
         'betas': [config.adam_beta1, config.adam_beta2],
@@ -380,6 +411,6 @@ def create_optimizer(config: configs.Config, model):
         lr_init=config.lr_init,
         lr_final=config.lr_final,
         **lr_kwargs)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr_init, **adam_kwargs)
+    optimizer = torch.optim.Adam(model_parameters, lr=config.lr_init, **adam_kwargs)
 
     return optimizer, lr_fn_main

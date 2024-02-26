@@ -57,21 +57,27 @@ class Model(nn.Module):
     power_lambda: float = -1.5
     std_scale: float = 0.5
     prop_desired_grid_size = [512, 2048]
+    aug_prop_desired_grid_size1 = [500, 2000]
     # prop_desired_grid_size = [2**4, 2**6]
 
-    def __init__(self, config=None, **kwargs):
+    def __init__(self, config=None, augmentation1=False, augmentation2=False, **kwargs):
         super().__init__()
         set_kwargs(self, kwargs)
         self.config = config
 
         from extensions import Backend
-        Backend.set_backend('dpcpp' if self.config.dpcpp_backend else 'cuda')
+        if not augmentation1:
+            Backend.set_backend('dpcpp' if self.config.dpcpp_backend else 'cuda')
         self.backend = Backend.get_backend()
         self.generator = self.backend.get_generator()
 
         # Construct MLPs. WARNING: Construction order may matter, if MLP weights are
         # being regularized.
-        self.nerf_mlp = NerfMLP(num_glo_features=self.num_glo_features,
+        if not augmentation1:
+            self.nerf_mlp = NerfMLP(num_glo_features=self.num_glo_features,
+                                num_glo_embeddings=self.num_glo_embeddings)
+        else:
+            self.nerf_mlp = aug_NerfMLP1(num_glo_features=self.num_glo_features,
                                 num_glo_embeddings=self.num_glo_embeddings)
         if self.config.dpcpp_backend:
             self.generator = self.nerf_mlp.encoder.backend.get_generator()
@@ -83,8 +89,14 @@ class Model(nn.Module):
         elif not self.distinct_prop:
             self.prop_mlp = PropMLP()
         else:
-            for i in range(self.num_levels - 1):
-                self.register_module(f'prop_mlp_{i}', PropMLP(grid_disired_resolution=self.prop_desired_grid_size[i]))
+            if not augmentation1:
+                for i in range(self.num_levels - 1):
+                    self.register_module(f'prop_mlp_{i}', PropMLP(grid_disired_resolution=self.prop_desired_grid_size[i]))
+            else:
+                for i in range(self.num_levels - 1):
+                    self.register_module(f'prop_mlp_{i}', aug_PropMLP1(grid_disired_resolution=self.aug_prop_desired_grid_size1[i]))
+
+
         if self.num_glo_features > 0 and not config.zero_glo:
             # Construct/grab GLO vectors for the cameras of each input ray.
             self.glo_vecs = nn.Embedding(self.num_glo_embeddings, self.num_glo_features)
@@ -102,6 +114,7 @@ class Model(nn.Module):
             batch,
             train_frac,
             compute_extras,
+            augmentation=False,
             zero_glo=True,
     ):
         """The mip-NeRF Model.
@@ -128,6 +141,11 @@ class Model(nn.Module):
             glo_vec = None
 
         # Define the mapping from normalized to metric ray distance.
+        # if(augmentation):
+        #     near_for_t_and_s = torch.ones_like(batch['near']) * self.config.aug_near
+        # else:
+        #     near_for_t_and_s = batch['near']
+        # t_to_s, s_to_t = coord.construct_ray_warps(self.raydist_fn, near_for_t_and_s, batch['far'], self.power_lambda)
         t_to_s, s_to_t = coord.construct_ray_warps(self.raydist_fn, batch['near'], batch['far'], self.power_lambda)
 
         #Changing sparse depths from t to s
@@ -143,6 +161,12 @@ class Model(nn.Module):
         else:
             init_s_near = np.clip(1 - train_frac / self.near_anneal_rate, 0,
                                   self.near_anneal_init)
+
+        if(augmentation):
+            init_s_near = 0.2
+
+
+
         init_s_far = 1.
         sdist = torch.cat([
             torch.full_like(batch['near'], init_s_near),
@@ -338,6 +362,13 @@ class Model(nn.Module):
                 renderings[i]['ray_rgbs'] = avg_rgbs[i]
 
         return renderings, ray_history
+
+
+
+@gin.configurable
+class aug_Model(Model):
+    pass
+
 
 
 class MLP(nn.Module):
@@ -537,6 +568,7 @@ class MLP(nn.Module):
                     grad_outputs=d_output,
                     create_graph=True,
                     retain_graph=True,
+                    # allow_unused=True,
                     only_inputs=True)[0]
             raw_grad_density = raw_grad_density.mean(-2)
             # Compute normal vectors as negative normalized density gradient.
@@ -673,11 +705,13 @@ class NerfMLP(MLP):
 class PropMLP(MLP):
     pass
 
-# class aug_NerfMLP(MLP):
-#     pass
-#
-# class aug_PropMLP(MLP):
-#     pass
+@gin.configurable
+class aug_NerfMLP1(MLP):
+    pass
+
+@gin.configurable
+class aug_PropMLP1(MLP):
+    pass
 
 
 @torch.no_grad()
