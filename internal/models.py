@@ -114,6 +114,7 @@ class Model(nn.Module):
             batch,
             train_frac,
             compute_extras,
+            augmentation=False,
             zero_glo=True,
     ):
         """The mip-NeRF Model.
@@ -140,6 +141,11 @@ class Model(nn.Module):
             glo_vec = None
 
         # Define the mapping from normalized to metric ray distance.
+        # if(augmentation):
+        #     near_for_t_and_s = torch.ones_like(batch['near']) * self.config.aug_near
+        # else:
+        #     near_for_t_and_s = batch['near']
+        # t_to_s, s_to_t = coord.construct_ray_warps(self.raydist_fn, near_for_t_and_s, batch['far'], self.power_lambda)
         t_to_s, s_to_t = coord.construct_ray_warps(self.raydist_fn, batch['near'], batch['far'], self.power_lambda)
 
         #Changing sparse depths from t to s
@@ -155,6 +161,12 @@ class Model(nn.Module):
         else:
             init_s_near = np.clip(1 - train_frac / self.near_anneal_rate, 0,
                                   self.near_anneal_init)
+
+        if(augmentation):
+            init_s_near = 0.2
+
+
+
         init_s_far = 1.
         sdist = torch.cat([
             torch.full_like(batch['near'], init_s_near),

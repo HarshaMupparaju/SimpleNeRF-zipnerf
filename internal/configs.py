@@ -64,6 +64,7 @@ class Config:
     augmentation1_required: bool = False
 
     augmentation_loss_mult: float = 0.1  # Multiplier on the augmentation loss.
+    aug_near: float = 1.0  # Near plane distance for the augmented model
 
 
     vocab_tree_path: Optional[str] = None  # Path to vocab tree for COLMAP.

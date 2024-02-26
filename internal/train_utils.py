@@ -364,10 +364,21 @@ def sparse_depth_loss(batch, renderings, config):
 #     return total_loss
 
 def augmentation_loss(batch, renderings, aug_renderings, config):
-    indices_mask = batch['original_batch_mask'].reshape(-1).bool()
+    # indices_mask = batch['original_batch_mask'].reshape(-1).bool()
 
-    rays_o = batch['origins'][indices_mask].reshape(config.batch_size, 1, 1, -1)
-    rays_d = batch['directions'][indices_mask].reshape(config.batch_size, 1, 1, -1)
+    # rays_o = batch['origins'][indices_mask].reshape(config.batch_size, 1, 1, -1)
+    # rays_d = batch['directions'][indices_mask].reshape(config.batch_size, 1, 1, -1)
+    indices_mask = batch['original_batch_mask'].reshape(-1).bool()
+    total_loss = 0
+    rendering = renderings[2]
+    aug_rendering = aug_renderings[2]
+
+    depth_main = rendering['depth'][indices_mask].reshape(config.batch_size)
+    depth_aug = aug_rendering['depth'][indices_mask].reshape(config.batch_size)
+    total_loss = torch.mean((depth_main - depth_aug) ** 2)
+    total_loss = config.augmentation_loss_mult * total_loss
+
+    return total_loss
 
 
 def clip_gradients(model, accelerator, config):

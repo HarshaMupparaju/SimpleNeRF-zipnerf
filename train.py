@@ -190,6 +190,7 @@ def main(unused_argv):
                     batch,
                     train_frac=train_frac,
                     compute_extras=compute_extras,
+                    augmentation = False,
                     zero_glo=False)
                 if config.augmentation1_required:
                     aug_renderings, aug_ray_history = aug_model(
@@ -197,6 +198,7 @@ def main(unused_argv):
                         batch,
                         train_frac=train_frac,
                         compute_extras=compute_extras,
+                        augmentation = True,
                         zero_glo=False)
                 # print(f"Renderings Keys: {renderings[0].keys()}")
                 # print(f"Ray_history Keys: {ray_history[0].keys()}")
@@ -209,7 +211,7 @@ def main(unused_argv):
 
             losses = {}
 
-            print(f"Rendered Depth : {torch.sum(renderings[2]['depth'][-1-config.sparse_depth_batch_size:-1])}, Ground Truth Depth : {torch.sum(batch['sparse_depth'][-1-config.sparse_depth_batch_size:-1])}")
+            # print(f"Rendered Depth : {torch.sum(renderings[2]['depth'][-1-config.sparse_depth_batch_size:-1])}, Ground Truth Depth : {torch.sum(batch['sparse_depth'][-1-config.sparse_depth_batch_size:-1])}")
 
             # supervised by data
             data_loss, stats = train_utils.compute_data_loss(batch, renderings, config)
@@ -358,11 +360,11 @@ def main(unused_argv):
                                                 accelerator, step,
                                                 config.checkpoints_total_limit)
                     
-                if (step % 5000 == 0):
-                    # save a checkpoint every 5000 steps
-                    checkpoints.save_checkpoint(config.checkpoint_dir,
-                                                accelerator, step,
-                                                config.checkpoints_total_limit)
+                # if (step % 5000 == 0):
+                #     # save a checkpoint every 5000 steps
+                #     checkpoints.save_checkpoint(config.checkpoint_dir,
+                #                                 accelerator, step,
+                #                                 config.checkpoints_total_limit)
 
             # Test-set evaluation.
             if config.train_render_every > 0 and step % config.train_render_every == 0:
